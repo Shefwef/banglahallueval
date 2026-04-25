@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Evaluate Gemma Model",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/evaluate_gemma.py",
+            "console": "integratedTerminal",
+            "env": {
+                "ENV_FILE": "${workspaceFolder}/.env"
+            },
+            "justMyCode": true
+        }
+    ]
+}
