@@ -4,7 +4,6 @@ import json
 import tqdm
 import os
 import time
-import re
 
 def calculate_average_summary_length(csv_path):
     # Read the dataset
@@ -44,8 +43,6 @@ def generate_summaries(csv_path, output_path, model_name, avg_length):
             })
             if response.status_code == 200:
                 answer = response.json()['response'].strip()
-                # Remove deepseek thinking process if present
-                answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL).strip()
                 generated_summaries.append(answer)
             else:
                 print(f"Error for ID {q_id}: {response.status_code}")
@@ -66,9 +63,9 @@ def generate_summaries(csv_path, output_path, model_name, avg_length):
 if __name__ == "__main__":
     csv_file = "Sample Selection for Summ/Datasets/CHQSumm.csv"
     
-    # Using DeepSeek-R1 14b for generation
-    model = "deepseek-r1:14b"
-    output_file = "Sample Selection for Summ/Results/deepseek_summaries_CHQSumm.csv"
+    # Using gemma2:9b for generation
+    model = "gemma2:9b"
+    output_file = "Sample Selection for Summ/Results/gemma_summaries_CHQSumm.csv"
     
     # Create Results dir if it doesn't exist
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
