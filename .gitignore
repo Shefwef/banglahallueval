@@ -19,7 +19,6 @@ coverage.xml
 .pytest_cache/
 .vscode/
 .idea/
-*.csv
 *.xlsx
 !tydiqa_goldp_bengali.csv
 gemma_answers_bengali.csv
