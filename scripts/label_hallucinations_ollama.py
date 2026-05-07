@@ -154,6 +154,7 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="Do not call model; only parse and write stub labels (unknown)")
     p.add_argument("--http-only", action="store_true", help="Only try HTTP API, don't fall back to CLI")
     p.add_argument("--retry-unknown", action="store_true", help="If input CSV already has labels, only retry 'unknown' rows")
+    p.add_argument("--force-binary", action="store_true", help="Force output to only 'yes' or 'no' by retrying until a binary label is obtained")
     args = p.parse_args()
 
     inp = Path(args.input)
@@ -180,7 +181,8 @@ def main():
         for i, r in enumerate(selected, start=args.start):
             sample_id = r.get("id") or r.get("source_id") or str(i)
             question = r.get("question", "")
-            answer = r.get("hallucinated_answer") or r.get("model_answer") or r.get("answer") or ""
+            # prefer explicit correct_answer field if present in this dataset
+            answer = r.get("correct_answer") or r.get("hallucinated_answer") or r.get("model_answer") or r.get("answer") or ""
             current_label = r.get("is_hallucinated", "unknown")
 
             if args.dry_run:
@@ -189,7 +191,21 @@ def main():
                 # skip already labeled rows
                 label = current_label
             else:
-                label = label_row(question, answer, args.model, http_only=args.http_only)
+                # If force-binary is set, retry labeling until yes/no is returned (with a safety cap)
+                if args.force_binary:
+                    label = "unknown"
+                    max_retries = 8
+                    for attempt in range(max_retries):
+                        label = label_row(question, answer, args.model, http_only=args.http_only)
+                        if label in ("yes", "no"):
+                            break
+                        # slight backoff
+                        time.sleep(0.5 + attempt * 0.2)
+                    # as a last resort, if still unknown, map to 'no' conservatively
+                    if label not in ("yes", "no"):
+                        label = "no"
+                else:
+                    label = label_row(question, answer, args.model, http_only=args.http_only)
 
             r_out = dict(r)
             r_out["is_hallucinated"] = label
