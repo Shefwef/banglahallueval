@@ -93,6 +93,7 @@ def label_row(document: str, summary: str, model: str, base_url: str) -> str:
             lab = normalize_label(resp)
             if lab != "unknown":
                 return lab
+            print(f"  [DEBUG] raw response: {repr(resp)}")
         time.sleep(0.5 + attempt * 0.5)
     return "unknown"
 
