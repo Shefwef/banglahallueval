@@ -65,7 +65,7 @@ def call_ollama(prompt: str, base_url: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_predict": -1,   # unlimited — deepseek needs long think chains
+            "num_predict": 512,  # cap think chain — 512 is enough for yes/no decisions
             "temperature": 0,
         },
     }
