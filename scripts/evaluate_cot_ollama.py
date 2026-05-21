@@ -42,6 +42,18 @@ ALL_MODELS = [
 
 # ── CoT Prompts ────────────────────────────────────────────────────────────────
 
+QA_COT_PROMPT = (
+    "You are an evaluator checking whether a model answer is hallucinated.\n\n"
+    "Question: {question}\n"
+    "Model Answer: {answer}\n\n"
+    "Analyze step by step:\n"
+    "Step 1: What factual claims does the answer make?\n"
+    "Step 2: Are these claims supported by or inferable from the question context?\n"
+    "Step 3: Based on steps 1-2, is the answer hallucinated?\n\n"
+    "Final answer (write only this word on the last line): yes or no\n"
+    "(yes = answer is hallucinated, no = answer is not hallucinated)"
+)
+
 SUMM_COT_PROMPT = (
     "You are an evaluator checking whether a summary is hallucinated relative to a document.\n\n"
     "Document: {document}\n"
@@ -282,6 +294,26 @@ def run_reasoning_task(
 
 def get_tasks(model: str, slug: str, base_url: str) -> dict:
     return {
+        "qa_hallu": lambda: run_csv_task(
+            "Hallucination Generated Answers/qa_4000.csv",
+            f"QA/Results/qa_cot_hallu_{slug}.csv",
+            lambda r: QA_COT_PROMPT.format(
+                question=r.get("question", ""),
+                answer=r.get("hallucinated_answer", ""),
+            ),
+            parse_summ_label,
+            model, base_url, num_predict=512,
+        ),
+        "qa_gt": lambda: run_csv_task(
+            "Hallucination Generated Answers/qa_4000.csv",
+            f"QA/Results/qa_cot_gt_{slug}.csv",
+            lambda r: QA_COT_PROMPT.format(
+                question=r.get("question", ""),
+                answer=r.get("right_answer", ""),
+            ),
+            parse_summ_label,
+            model, base_url, num_predict=512,
+        ),
         "summ_hallu": lambda: run_csv_task(
             "Hallucination Generated Answers/summarization_3000_corrected.csv",
             f"Summarization/Evaluation_Results/summ_3000_cot_{slug}.csv",
@@ -322,7 +354,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument(
         "--task",
-        choices=["all", "summ_hallu", "summ_gt", "reason_hallu", "reason_gt"],
+        choices=["all", "qa_hallu", "qa_gt", "summ_hallu", "summ_gt", "reason_hallu", "reason_gt"],
         default="all",
     )
     p.add_argument(
