@@ -69,13 +69,21 @@ def call_ollama(prompt: str, base_url: str) -> str:
             "temperature": 0,
         },
     }
-    try:
-        resp = requests.post(url, json=payload, timeout=300)
-        resp.raise_for_status()
-        return resp.json().get("response", "").strip()
-    except Exception as e:
-        print(f"  [ERROR] Ollama request failed: {e}")
-        return ""
+    for attempt in range(3):
+        try:
+            resp = requests.post(url, json=payload, timeout=300)
+            resp.raise_for_status()
+            result = resp.json().get("response", "").strip()
+            if result:
+                return result
+            if attempt < 2:
+                print(f"  [RETRY] Empty response, retrying ({attempt + 1}/3)...")
+                time.sleep(5)
+        except Exception as e:
+            print(f"  [ERROR] Ollama request failed: {e}")
+            if attempt < 2:
+                time.sleep(5)
+    return ""
 
 
 # ── Label extractor (never returns blank) ─────────────────────────────────────
