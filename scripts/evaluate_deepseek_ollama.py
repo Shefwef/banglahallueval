@@ -69,7 +69,7 @@ def call_ollama(prompt: str, base_url: str) -> str:
         "stream": False,
         "options": {
             "num_ctx": 16384,  # Bengali tokenizes at ~2 tokens/char; 16384 covers doc+summary safely
-            "num_predict": 512,
+            "num_predict": 1024,  # deepseek think chain can exceed 512 tokens before final yes/no
             "temperature": 0,
         },
     }
