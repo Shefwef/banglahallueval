@@ -58,6 +58,9 @@ REASONING_PROMPT = (
 
 # ── Ollama call ────────────────────────────────────────────────────────────────
 
+MAX_DOC_CHARS = 8000  # ~2000 Bengali tokens — safe under 8192 num_ctx
+
+
 def call_ollama(prompt: str, base_url: str) -> str:
     url = f"{base_url.rstrip('/')}/api/generate"
     payload = {
@@ -65,7 +68,8 @@ def call_ollama(prompt: str, base_url: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_predict": 512,  # cap think chain — 512 is enough for yes/no decisions
+            "num_ctx": 8192,   # raise from Ollama default 2048 — fixes context overflow
+            "num_predict": 512,
             "temperature": 0,
         },
     }
@@ -219,6 +223,8 @@ def run_summ_hallu(base_url: str) -> None:
 
         for i, r in pending:
             document = r.get("document", "") or r.get("question", "")
+            if len(document) > MAX_DOC_CHARS:
+                document = document[:MAX_DOC_CHARS] + "... [truncated]"
             summary = r.get("hallucinated_summary", "") or r.get("summary", "") or r.get("model_summary", "")
             sid = r.get("id") or r.get("source_id") or str(i)
 
