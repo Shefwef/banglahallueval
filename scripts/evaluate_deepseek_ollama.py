@@ -58,7 +58,7 @@ REASONING_PROMPT = (
 
 # ── Ollama call ────────────────────────────────────────────────────────────────
 
-MAX_DOC_CHARS = 8000  # ~2000 Bengali tokens — safe under 8192 num_ctx
+MAX_DOC_CHARS = 3000  # Bengali ≈ 2 tokens/char → 3000 chars ≈ 6000 tokens, safe under 8192 num_ctx
 
 
 def call_ollama(prompt: str, base_url: str) -> str:
