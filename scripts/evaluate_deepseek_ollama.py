@@ -68,7 +68,7 @@ def call_ollama(prompt: str, base_url: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_ctx": 8192,   # raise from Ollama default 2048 — fixes context overflow
+            "num_ctx": 16384,  # Bengali tokenizes at ~2 tokens/char; 16384 covers doc+summary safely
             "num_predict": 512,
             "temperature": 0,
         },
