@@ -36,9 +36,24 @@ from typing import Optional
 ALL_MODELS = [
     ("qwen2.5:32b-instruct", "qwen2_5_32b"),
     ("gemma2:27b",           "gemma2_27b"),
+    ("deepseek-r1:14b",      "deepseek_r1_14b"),
     ("mistral-nemo:latest",  "mistral_nemo"),
     ("llama3.1:8b",          "llama3_1_8b"),
 ]
+
+# Thinking models (e.g. deepseek-r1) emit long <think> blocks before the verdict,
+# so they need a much larger token budget or the final answer gets truncated away.
+def num_predict_for(model: str) -> int:
+    return 4096 if "deepseek-r1" in model else 512
+
+
+# Context window. Ollama defaults to the model's full n_ctx (e.g. 32768 for
+# qwen2.5), whose KV cache alone is ~8 GB and forces big models to spill layers
+# onto the CPU. All our prompts are < ~1500 tokens, so a small context keeps the
+# whole model on the GPU. deepseek needs room for its long thinking output, so it
+# gets prompt + thinking budget.
+def num_ctx_for(model: str) -> int:
+    return 8192 if "deepseek-r1" in model else 4096
 
 # ── CoT Prompts ────────────────────────────────────────────────────────────────
 
@@ -80,7 +95,8 @@ REASONING_COT_PROMPT = (
 
 # ── Ollama call ────────────────────────────────────────────────────────────────
 
-def call_ollama(prompt: str, model: str, base_url: str, num_predict: int = 512) -> str:
+def call_ollama(prompt: str, model: str, base_url: str, num_predict: int = 512,
+                num_ctx: int = 4096) -> str:
     url = f"{base_url.rstrip('/')}/api/generate"
     payload = {
         "model": model,
@@ -88,6 +104,7 @@ def call_ollama(prompt: str, model: str, base_url: str, num_predict: int = 512) 
         "stream": False,
         "options": {
             "num_predict": num_predict,
+            "num_ctx": num_ctx,
             "temperature": 0,
         },
     }
@@ -197,6 +214,7 @@ def run_csv_task(
     model: str,
     base_url: str,
     num_predict: int = 512,
+    num_ctx: int = 4096,
 ) -> None:
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
@@ -233,7 +251,7 @@ def run_csv_task(
         for i, r in pending:
             sid = r.get("id") or r.get("source_id") or str(i)
             prompt = build_prompt_fn(r)
-            raw = call_ollama(prompt, model, base_url, num_predict)
+            raw = call_ollama(prompt, model, base_url, num_predict, num_ctx)
             label = parse_fn(raw)
             r_out = dict(r)
             r_out["is_hallucinated"] = label
@@ -249,6 +267,8 @@ def run_reasoning_task(
     is_groundtruth: bool,
     model: str,
     base_url: str,
+    num_predict: int = 512,
+    num_ctx: int = 4096,
 ) -> None:
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
@@ -282,7 +302,7 @@ def run_reasoning_task(
             chain=df.at[idx, chain_col],
             answer=df.at[idx, ans_col],
         )
-        raw = call_ollama(prompt, model, base_url, num_predict=512)
+        raw = call_ollama(prompt, model, base_url, num_predict=num_predict, num_ctx=num_ctx)
         label = parse_reasoning_label(raw)
         df.at[idx, "is_hallucinated"] = label
         print(f"  {idx}: {df.at[idx, 'id']} -> {label}")
@@ -293,6 +313,8 @@ def run_reasoning_task(
 # ── Task definitions ───────────────────────────────────────────────────────────
 
 def get_tasks(model: str, slug: str, base_url: str) -> dict:
+    npred = num_predict_for(model)
+    nctx = num_ctx_for(model)
     return {
         "qa_hallu": lambda: run_csv_task(
             "Hallucination Generated Answers/qa_4000.csv",
@@ -302,7 +324,7 @@ def get_tasks(model: str, slug: str, base_url: str) -> dict:
                 answer=r.get("hallucinated_answer", ""),
             ),
             parse_summ_label,
-            model, base_url, num_predict=512,
+            model, base_url, num_predict=npred, num_ctx=nctx,
         ),
         "qa_gt": lambda: run_csv_task(
             "Hallucination Generated Answers/qa_4000.csv",
@@ -312,7 +334,7 @@ def get_tasks(model: str, slug: str, base_url: str) -> dict:
                 answer=r.get("right_answer", ""),
             ),
             parse_summ_label,
-            model, base_url, num_predict=512,
+            model, base_url, num_predict=npred, num_ctx=nctx,
         ),
         "summ_hallu": lambda: run_csv_task(
             "Hallucination Generated Answers/summarization_3000_corrected.csv",
@@ -322,7 +344,7 @@ def get_tasks(model: str, slug: str, base_url: str) -> dict:
                 summary=r.get("hallucinated_summary", "") or r.get("summary", ""),
             ),
             parse_summ_label,
-            model, base_url, num_predict=512,
+            model, base_url, num_predict=npred, num_ctx=nctx,
         ),
         "summ_gt": lambda: run_csv_task(
             "Summarization/1000 Selected Samples/banglahallueval_summarization_dataset_1000.csv",
@@ -332,19 +354,19 @@ def get_tasks(model: str, slug: str, base_url: str) -> dict:
                 summary=r.get("summary", ""),
             ),
             parse_summ_label,
-            model, base_url, num_predict=512,
+            model, base_url, num_predict=npred, num_ctx=nctx,
         ),
         "reason_hallu": lambda: run_reasoning_task(
             "Reasoning/1000_hallucinated Samples/somadhan_1000_hallucinated.csv",
             f"Reasoning/Results/reasoning_cot_{slug}.csv",
             is_groundtruth=False,
-            model=model, base_url=base_url,
+            model=model, base_url=base_url, num_predict=npred, num_ctx=nctx,
         ),
         "reason_gt": lambda: run_reasoning_task(
             "Reasoning/1000 Selected Samples/somadhan_1000_main_ordered.csv",
             f"Reasoning/Results/reasoning_gt_cot_{slug}.csv",
             is_groundtruth=True,
-            model=model, base_url=base_url,
+            model=model, base_url=base_url, num_predict=npred, num_ctx=nctx,
         ),
     }
 
