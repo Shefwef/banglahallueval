@@ -185,12 +185,13 @@ def get_tasks(llm) -> dict:
             ),
             parse_summ_label, llm,
         ),
+        # Ground truth is one row per question (1000), matching the other models.
         "qa_gt": lambda: run_csv_task(
-            "Hallucination Generated Answers/qa_4000.csv",
+            "QA/qa_gt_1000.csv",
             f"QA/Results/qa_cot_gt_{SLUG}.csv",
             lambda r: QA_COT_PROMPT.format(
                 question=r.get("question", ""),
-                answer=r.get("right_answer", ""),
+                answer=r.get("correct_answer", ""),
             ),
             parse_summ_label, llm,
         ),

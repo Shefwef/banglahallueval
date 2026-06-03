@@ -372,12 +372,15 @@ def get_tasks(model: str, slug: str, base_url: str, concurrency: int = 1) -> dic
             parse_summ_label,
             model, base_url, num_predict=npred, num_ctx=nctx, concurrency=concurrency,
         ),
+        # Ground-truth answers are identical across a question's 4 aspects, so this
+        # is evaluated once per question (1000 rows), matching the existing
+        # llama/mistral qa_gt files — NOT the full 4000-row per-aspect file.
         "qa_gt": lambda: run_csv_task(
-            "Hallucination Generated Answers/qa_4000.csv",
+            "QA/qa_gt_1000.csv",
             f"QA/Results/qa_cot_gt_{slug}.csv",
             lambda r: QA_COT_PROMPT.format(
                 question=r.get("question", ""),
-                answer=r.get("right_answer", ""),
+                answer=r.get("correct_answer", ""),
             ),
             parse_summ_label,
             model, base_url, num_predict=npred, num_ctx=nctx, concurrency=concurrency,

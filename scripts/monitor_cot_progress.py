@@ -37,7 +37,7 @@ TASKS = {
     "qa_hallu":     ("QA/Results/qa_cot_hallu_{slug}.csv",
                      "Hallucination Generated Answers/qa_4000.csv"),
     "qa_gt":        ("QA/Results/qa_cot_gt_{slug}.csv",
-                     "Hallucination Generated Answers/qa_4000.csv"),
+                     "QA/qa_gt_1000.csv"),
     "summ_hallu":   ("Summarization/Evaluation_Results/summ_3000_cot_{slug}.csv",
                      "Hallucination Generated Answers/summarization_3000_corrected.csv"),
     "summ_gt":      ("Summarization/Evaluation_Results/summ_1000_cot_{slug}.csv",
