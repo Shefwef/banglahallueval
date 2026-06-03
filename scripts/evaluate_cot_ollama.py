@@ -26,10 +26,12 @@ import re
 import json
 import argparse
 import time
+import threading
 import requests
 import pandas as pd
 from pathlib import Path
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Models ─────────────────────────────────────────────────────────────────────
 
@@ -97,6 +99,14 @@ REASONING_COT_PROMPT = (
 
 def call_ollama(prompt: str, model: str, base_url: str, num_predict: int = 512,
                 num_ctx: int = 4096) -> str:
+    """Call Ollama, returning the model response.
+
+    If Ollama is unreachable (e.g. the service restarted or the box rebooted),
+    this BLOCKS and retries with backoff until it comes back, rather than
+    returning "" — otherwise the caller would silently write a bogus default
+    label for every row during the outage. Transient request errors get a few
+    retries before giving up with "".
+    """
     url = f"{base_url.rstrip('/')}/api/generate"
     payload = {
         "model": model,
@@ -108,13 +118,28 @@ def call_ollama(prompt: str, model: str, base_url: str, num_predict: int = 512,
             "temperature": 0,
         },
     }
-    try:
-        resp = requests.post(url, json=payload, timeout=300)
-        resp.raise_for_status()
-        return resp.json().get("response", "").strip()
-    except Exception as e:
-        print(f"  [ERROR] {e}")
-        return ""
+    transient_left = 5
+    waited = False
+    while True:
+        try:
+            resp = requests.post(url, json=payload, timeout=600)
+            resp.raise_for_status()
+            if waited:
+                print("  [ok] Ollama reachable again, resuming.")
+            return resp.json().get("response", "").strip()
+        except requests.exceptions.ConnectionError:
+            # Service down — wait it out instead of fabricating labels.
+            if not waited:
+                print("  [WAIT] Ollama unreachable; waiting for it to come back "
+                      "(will not write labels meanwhile)...")
+                waited = True
+            time.sleep(15)
+        except Exception as e:
+            transient_left -= 1
+            print(f"  [ERROR] {e} (retries left: {transient_left})")
+            if transient_left <= 0:
+                return ""
+            time.sleep(5)
 
 # ── Label parsers ──────────────────────────────────────────────────────────────
 
@@ -215,6 +240,7 @@ def run_csv_task(
     base_url: str,
     num_predict: int = 512,
     num_ctx: int = 4096,
+    concurrency: int = 1,
 ) -> None:
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
@@ -240,23 +266,43 @@ def run_csv_task(
         (i, r) for i, r in enumerate(rows)
         if (r.get("id") or r.get("source_id") or str(i)) not in completed
     ]
-    print(f"  Pending: {len(pending)}")
+    print(f"  Pending: {len(pending)}  (concurrency={concurrency})")
 
     write_header = not Path(output_file).exists() or Path(output_file).stat().st_size == 0
+
+    def work(item):
+        i, r = item
+        sid = r.get("id") or r.get("source_id") or str(i)
+        raw = call_ollama(build_prompt_fn(r), model, base_url, num_predict, num_ctx)
+        label = parse_fn(raw)
+        r_out = dict(r)
+        r_out["is_hallucinated"] = label
+        return i, sid, r_out, label
+
+    lock = threading.Lock()
+    done = 0
     with open(output_file, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         if write_header:
             writer.writeheader()
+            f.flush()
 
-        for i, r in pending:
-            sid = r.get("id") or r.get("source_id") or str(i)
-            prompt = build_prompt_fn(r)
-            raw = call_ollama(prompt, model, base_url, num_predict, num_ctx)
-            label = parse_fn(raw)
-            r_out = dict(r)
-            r_out["is_hallucinated"] = label
-            writer.writerow(r_out)
-            print(f"  {i}: {sid} -> {label}")
+        if concurrency <= 1:
+            for item in pending:
+                i, sid, r_out, label = work(item)
+                writer.writerow(r_out)
+                f.flush()
+                done += 1
+                print(f"  {i}: {sid} -> {label}")
+        else:
+            with ThreadPoolExecutor(max_workers=concurrency) as ex:
+                for fut in as_completed(ex.submit(work, item) for item in pending):
+                    i, sid, r_out, label = fut.result()
+                    with lock:
+                        writer.writerow(r_out)
+                        f.flush()
+                        done += 1
+                        print(f"  ({done}/{len(pending)}) {i}: {sid} -> {label}")
 
     print(f"  Saved → {output_file}\n")
 
@@ -312,7 +358,7 @@ def run_reasoning_task(
 
 # ── Task definitions ───────────────────────────────────────────────────────────
 
-def get_tasks(model: str, slug: str, base_url: str) -> dict:
+def get_tasks(model: str, slug: str, base_url: str, concurrency: int = 1) -> dict:
     npred = num_predict_for(model)
     nctx = num_ctx_for(model)
     return {
@@ -324,7 +370,7 @@ def get_tasks(model: str, slug: str, base_url: str) -> dict:
                 answer=r.get("hallucinated_answer", ""),
             ),
             parse_summ_label,
-            model, base_url, num_predict=npred, num_ctx=nctx,
+            model, base_url, num_predict=npred, num_ctx=nctx, concurrency=concurrency,
         ),
         "qa_gt": lambda: run_csv_task(
             "Hallucination Generated Answers/qa_4000.csv",
@@ -334,7 +380,7 @@ def get_tasks(model: str, slug: str, base_url: str) -> dict:
                 answer=r.get("right_answer", ""),
             ),
             parse_summ_label,
-            model, base_url, num_predict=npred, num_ctx=nctx,
+            model, base_url, num_predict=npred, num_ctx=nctx, concurrency=concurrency,
         ),
         "summ_hallu": lambda: run_csv_task(
             "Hallucination Generated Answers/summarization_3000_corrected.csv",
@@ -344,7 +390,7 @@ def get_tasks(model: str, slug: str, base_url: str) -> dict:
                 summary=r.get("hallucinated_summary", "") or r.get("summary", ""),
             ),
             parse_summ_label,
-            model, base_url, num_predict=npred, num_ctx=nctx,
+            model, base_url, num_predict=npred, num_ctx=nctx, concurrency=concurrency,
         ),
         "summ_gt": lambda: run_csv_task(
             "Summarization/1000 Selected Samples/banglahallueval_summarization_dataset_1000.csv",
@@ -354,7 +400,7 @@ def get_tasks(model: str, slug: str, base_url: str) -> dict:
                 summary=r.get("summary", ""),
             ),
             parse_summ_label,
-            model, base_url, num_predict=npred, num_ctx=nctx,
+            model, base_url, num_predict=npred, num_ctx=nctx, concurrency=concurrency,
         ),
         "reason_hallu": lambda: run_reasoning_task(
             "Reasoning/1000_hallucinated Samples/somadhan_1000_hallucinated.csv",
@@ -390,17 +436,24 @@ def main():
         default=None,
         help="Ollama base URL. Falls back to OLLAMA_BASE_URL env var, then http://localhost:11434",
     )
+    p.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Parallel in-flight requests for CSV tasks (QA/summ). Needs "
+             "OLLAMA_NUM_PARALLEL >= this on the server. Reasoning stays sequential.",
+    )
     args = p.parse_args()
 
     base_url = args.ollama_url or os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434"
-    print(f"Ollama at: {base_url}\n")
+    print(f"Ollama at: {base_url}  (concurrency={args.concurrency})\n")
 
     models_to_run = ALL_MODELS
     if args.models:
         models_to_run = [(m, s) for m, s in ALL_MODELS if m in args.models]
 
     for model, slug in models_to_run:
-        tasks = get_tasks(model, slug, base_url)
+        tasks = get_tasks(model, slug, base_url, concurrency=args.concurrency)
         to_run = list(tasks.keys()) if args.task == "all" else [args.task]
 
         for task in to_run:
