@@ -8,6 +8,9 @@ cd "/home/bio/Desktop/Thesis-401/cot phase/BanglaHalluEval"
 PY="$HOME/anaconda3/envs/attention/bin/python"
 LOG="logs/cot_tigerllm_run.log"
 mkdir -p logs
+# Reduce CUDA allocator fragmentation so TigerLLM-9B keeps more layers on GPU
+# (it sits right at the 24 GB edge) instead of offloading to CPU.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "[phase2] $(date) waiting for Phase 1 completion (logs/phase1.done)..." | tee -a "$LOG"
 while [ ! -f logs/phase1.done ]; do

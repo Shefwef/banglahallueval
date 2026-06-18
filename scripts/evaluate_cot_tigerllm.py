@@ -54,34 +54,53 @@ class TigerLLM:
     def __init__(self, model_id: str = MODEL_ID):
         print(f"Loading {model_id} (bfloat16)...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+        # Use device_map="auto" to handle placement automatically
+        # This may offload small parts to CPU if needed
         self.model = AutoModelForCausalLM.from_pretrained(
             model_id,
             device_map="auto",
             torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
         )
         self.model.eval()
         print("Model loaded.\n")
 
     @torch.no_grad()
-    def generate(self, prompt: str, max_new_tokens: int = 512) -> str:
-        messages = [{"role": "user", "content": prompt}]
-        inputs = self.tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            return_tensors="pt",
-        ).to(self.model.device)
-        out = self.model.generate(
-            inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            temperature=None,
-            top_p=None,
-            top_k=None,
-            pad_token_id=self.tokenizer.eos_token_id,
-        )
-        # Only decode the newly generated continuation.
-        gen = out[0][inputs.shape[-1]:]
-        return self.tokenizer.decode(gen, skip_special_tokens=True).strip()
+    def generate(self, prompt: str, max_new_tokens: int = 256) -> str:
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            inputs = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                return_tensors="pt",
+            )
+            if hasattr(inputs, "input_ids"):
+                # BatchFeature object - move to model device
+                input_ids = inputs["input_ids"].to(self.model.device)
+                attention_mask = inputs.get("attention_mask", None)
+                if attention_mask is not None:
+                    attention_mask = attention_mask.to(self.model.device)
+            else:
+                # Tensor object
+                input_ids = inputs.to(self.model.device)
+                attention_mask = None
+            
+            out = self.model.generate(
+                input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
+            
+            # Only decode the newly generated continuation.
+            input_len = input_ids.shape[-1]
+            gen = out[0][input_len:]
+            return self.tokenizer.decode(gen, skip_special_tokens=True).strip()
+        except Exception as e:
+            error_msg = str(e)[:100]
+            print(f"[ERROR] Generation failed: {error_msg}", file=sys.stderr)
+            return ""
 
 # ── CSV task runner (mirrors evaluate_cot_ollama.run_csv_task) ────────────────
 
